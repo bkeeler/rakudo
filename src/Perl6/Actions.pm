@@ -2358,10 +2358,51 @@ class Perl6::RegexActions is Regex::P6Regex::Actions {
         my $past := $<statement>.ast;
         make PAST::Regex.new( $past, :pasttype('pastnode') );
     }
+    method metachar:sym<var>($/) {
+        my $past;
+        my $name := $<pos> ?? +$<pos> !! ~$<name>;
+        if $<quantified_atom> {
+            if $<var> {
+                $/.CURSOR.panic('"$var = " syntax not yet supported in regexes');
+            }
+            $past := $<quantified_atom>[0].ast;
+            if $past.pasttype eq 'quant' && $past[0].pasttype eq 'subrule' {
+                Regex::P6Regex::Actions::subrule_alias($past[0], $name);
+            }
+            elsif $past.pasttype eq 'subrule' { Regex::P6Regex::Actions::subrule_alias($past, $name); }
+            else {
+                $past := PAST::Regex.new( $past, :name($name), :pasttype('subcapture'), :node($/) );
+            }
+        }
+        else {
+            if $<var> {
+                my @MODIFIERS := Q:PIR {
+                    %r = get_hll_global ['Regex';'P6Regex';'Actions'], '@MODIFIERS'
+                };
+                my $subtype := @MODIFIERS[0]<i> ?? 'literal_i' !! 'literal';
+                $past := PAST::Regex.new( $<var>.ast, :pasttype('interpolator'),
+                                          :subtype($subtype), :node($/) );
+            } else {
+                $past := PAST::Regex.new( '!BACKREF', $name, :pasttype('subrule'),
+                                          :subtype('method'), :node($/) );
+            }
+        }
+        make $past;
+    }
 
-    method metachar:sym<{ }>($/) { make $<codeblock>.ast; }
+    method assertion:sym<var>($/) {
+        make PAST::Regex.new( $<var>.ast, :pasttype('interpolator'),
+                              :subtype('compile_regex'), :node($/) );
+    }
 
-    method assertion:sym<{ }>($/) { make $<codeblock>.ast; }
+    method metachar:sym<{ }>($/) { 
+        make PAST::Regex.new(:node($/), :pasttype('pastnode'), $<codeblock>.ast); 
+    }
+
+    method assertion:sym<{ }>($/) { 
+        make PAST::Regex.new( :node($/), :pasttype('interpolator'), :subtype('compile_regex'),
+                              $<codeblock>.ast );
+   }
 
     method codeblock($/) {
         my $block := $<block>.ast;
@@ -2376,20 +2417,17 @@ class Perl6::RegexActions is Regex::P6Regex::Actions {
     }
 
     sub bindmatch($past) {
-        PAST::Regex.new(
-            PAST::Stmts.new(
+        PAST::Stmts.new(
+            PAST::Op.new(
+                PAST::Var.new( :name('$/') ),
                 PAST::Op.new(
-                    PAST::Var.new( :name('$/') ),
-                    PAST::Op.new(
-                        PAST::Var.new( :name('$¢') ),
-                        :name('MATCH'),
-                        :pasttype('callmethod')
-                    ),
-                    :pasttype('bind')
+                    PAST::Var.new( :name('$¢') ),
+                    :name('MATCH'),
+                    :pasttype('callmethod')
                 ),
-                $past
+                :pasttype('bind')
             ),
-            :pasttype('pastnode')
+            $past,
         );
     }
 }
